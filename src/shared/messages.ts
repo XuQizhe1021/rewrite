@@ -4,6 +4,7 @@ export type UiToBackgroundMessage =
   | { type: 'UI_HELLO'; tabId?: number }
   | { type: 'UI_START'; payload: StartRequest }
   | { type: 'UI_RETRY_LAST'; tabId: number; present?: PresentTarget }
+  | { type: 'UI_OPEN_SIDEPANEL'; tabId: number }
   | { type: 'UI_OPEN_OPTIONS' }
   | { type: 'UI_GET_CONFIG' }
   | { type: 'UI_SET_CONFIG'; config: UserConfig }

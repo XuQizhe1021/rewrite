@@ -12,6 +12,7 @@ import { callProviderStream } from './providers'
 const uiPorts = new Set<chrome.runtime.Port>()
 const lastRequestByTab = new Map<number, StartRequest>()
 const lastResultByTab = new Map<number, string>()
+const latestEventByTab = new Map<number, StreamEvent>()
 
 function broadcastToUi(msg: BackgroundToUiMessage, tabId?: number): void {
   for (const p of uiPorts) {
@@ -51,7 +52,20 @@ async function sendToContent(tabId: number, msg: BackgroundToContentMessage): Pr
 }
 
 function emit(tabId: number, event: StreamEvent): void {
+  latestEventByTab.set(tabId, event)
   broadcastToUi({ type: 'UI_STREAM', event }, tabId)
+}
+
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
+  })
+  try {
+    return await Promise.race([task, timeoutPromise])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 async function runRequest(req: StartRequest): Promise<void> {
@@ -68,24 +82,53 @@ async function runRequest(req: StartRequest): Promise<void> {
     return
   }
 
-  if (req.present === 'overlay') {
-    await sendToContent(req.tabId, { type: 'CONTENT_SHOW_OVERLAY', title: '生成中…' })
-  } else {
-    await openSidePanel(req.tabId)
+  let presentTarget: PresentTarget = req.present
+  try {
+    if (presentTarget === 'overlay') {
+      await sendToContent(req.tabId, { type: 'CONTENT_SHOW_OVERLAY', title: '生成中…' })
+    } else {
+      await withTimeout(openSidePanel(req.tabId), 1000, '打开侧边栏超时，请稍后重试')
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '打开侧边栏失败'
+    console.error('打开呈现容器失败', error)
+    emit(req.tabId, {
+      type: 'error',
+      requestId: req.requestId,
+      message: `侧边栏不可用，已降级到悬浮层：${message}`,
+    })
+    presentTarget = 'overlay'
+    await sendToContent(req.tabId, { type: 'CONTENT_SHOW_OVERLAY', title: '侧边栏不可用，已切换悬浮层' })
   }
 
   emit(req.tabId, { type: 'status', requestId: req.requestId, stage: 'extract' })
-  if (req.present === 'overlay') {
+  if (presentTarget === 'overlay') {
     await sendToContent(req.tabId, { type: 'CONTENT_OVERLAY_STATUS', message: '正在提取正文…' })
   }
 
-  const extracted = (await chrome.tabs.sendMessage(req.tabId, {
-    type: 'CONTENT_EXTRACT',
-    selectionOnly: req.selectionOnly,
-  } satisfies BackgroundToContentMessage)) as unknown as { title: string; url: string; content: string }
+  await ensureContentScript(req.tabId)
+  let extracted: { title: string; url: string; content: string }
+  try {
+    extracted = (await withTimeout(
+      chrome.tabs.sendMessage(req.tabId, {
+        type: 'CONTENT_EXTRACT',
+        selectionOnly: req.selectionOnly,
+      } satisfies BackgroundToContentMessage),
+      10000,
+      '页面正文提取超时',
+    )) as unknown as { title: string; url: string; content: string }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '页面正文提取失败'
+    console.error('正文提取失败', error)
+    emit(req.tabId, { type: 'error', requestId: req.requestId, message })
+    if (presentTarget === 'overlay') {
+      await sendToContent(req.tabId, { type: 'CONTENT_OVERLAY_ERROR', message })
+    }
+    return
+  }
 
   emit(req.tabId, { type: 'status', requestId: req.requestId, stage: 'truncate' })
-  if (req.present === 'overlay') {
+  if (presentTarget === 'overlay') {
     await sendToContent(req.tabId, { type: 'CONTENT_OVERLAY_STATUS', message: '正在截断上下文…' })
   }
 
@@ -104,7 +147,7 @@ async function runRequest(req: StartRequest): Promise<void> {
   })
 
   emit(req.tabId, { type: 'status', requestId: req.requestId, stage: 'request' })
-  if (req.present === 'overlay') {
+  if (presentTarget === 'overlay') {
     await sendToContent(req.tabId, { type: 'CONTENT_OVERLAY_STATUS', message: '正在请求模型…' })
   }
 
@@ -119,14 +162,15 @@ async function runRequest(req: StartRequest): Promise<void> {
     })) {
       fullText += delta
       emit(req.tabId, { type: 'delta', requestId: req.requestId, delta })
-      if (req.present === 'overlay') {
+      if (presentTarget === 'overlay') {
         await sendToContent(req.tabId, { type: 'CONTENT_OVERLAY_DELTA', delta })
       }
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : '请求失败'
+    console.error('模型请求失败', e)
     emit(req.tabId, { type: 'error', requestId: req.requestId, message })
-    if (req.present === 'overlay') {
+    if (presentTarget === 'overlay') {
       await sendToContent(req.tabId, { type: 'CONTENT_OVERLAY_ERROR', message })
     }
     return
@@ -134,7 +178,7 @@ async function runRequest(req: StartRequest): Promise<void> {
 
   lastResultByTab.set(req.tabId, fullText)
   emit(req.tabId, { type: 'done', requestId: req.requestId, text: fullText })
-  if (req.present === 'overlay') {
+  if (presentTarget === 'overlay') {
     await sendToContent(req.tabId, { type: 'CONTENT_OVERLAY_DONE', text: fullText })
   }
 
@@ -196,41 +240,82 @@ chrome.runtime.onConnect.addListener((port) => {
   })
 
   port.onMessage.addListener(async (raw) => {
-    const msg = raw as UiToBackgroundMessage
-    if (msg.type === 'UI_HELLO') {
-      const config = await loadConfig()
-      port.postMessage({ type: 'UI_CONFIG', config } satisfies BackgroundToUiMessage)
-      return
-    }
+    try {
+      const msg = raw as UiToBackgroundMessage
+      if (msg.type === 'UI_HELLO') {
+        const config = await loadConfig()
+        port.postMessage({ type: 'UI_CONFIG', config } satisfies BackgroundToUiMessage)
+        const tabId = msg.tabId ?? port.sender?.tab?.id
+        if (typeof tabId === 'number') {
+          const latest = latestEventByTab.get(tabId)
+          if (latest) {
+            port.postMessage({ type: 'UI_STREAM', event: latest } satisfies BackgroundToUiMessage)
+          }
+        }
+        return
+      }
 
-    if (msg.type === 'UI_OPEN_OPTIONS') {
-      await chrome.runtime.openOptionsPage()
-      return
-    }
+      if (msg.type === 'UI_OPEN_OPTIONS') {
+        await chrome.runtime.openOptionsPage()
+        return
+      }
 
-    if (msg.type === 'UI_GET_CONFIG') {
-      const config = await loadConfig()
-      port.postMessage({ type: 'UI_CONFIG', config } satisfies BackgroundToUiMessage)
-      return
-    }
+      if (msg.type === 'UI_OPEN_SIDEPANEL') {
+        try {
+          await withTimeout(openSidePanel(msg.tabId), 1000, '打开侧边栏超时，请稍后重试')
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '打开侧边栏失败'
+          console.error('主动打开侧边栏失败', error)
+          emit(msg.tabId, {
+            type: 'error',
+            requestId: crypto.randomUUID(),
+            message,
+          })
+        }
+        return
+      }
 
-    if (msg.type === 'UI_SET_CONFIG') {
-      await saveConfig(msg.config as UserConfig)
-      const config = await loadConfig()
-      port.postMessage({ type: 'UI_CONFIG', config } satisfies BackgroundToUiMessage)
-      return
-    }
+      if (msg.type === 'UI_GET_CONFIG') {
+        const config = await loadConfig()
+        port.postMessage({ type: 'UI_CONFIG', config } satisfies BackgroundToUiMessage)
+        return
+      }
 
-    if (msg.type === 'UI_START') {
-      await runRequest(msg.payload)
-      return
-    }
+      if (msg.type === 'UI_SET_CONFIG') {
+        await saveConfig(msg.config as UserConfig)
+        const config = await loadConfig()
+        port.postMessage({ type: 'UI_CONFIG', config } satisfies BackgroundToUiMessage)
+        return
+      }
 
-    if (msg.type === 'UI_RETRY_LAST') {
-      const last = lastRequestByTab.get(msg.tabId)
-      if (!last) return
-      const present: PresentTarget = msg.present ?? last.present
-      await runRequest({ ...last, requestId: crypto.randomUUID(), present })
+      if (msg.type === 'UI_START') {
+        await runRequest(msg.payload)
+        return
+      }
+
+      if (msg.type === 'UI_RETRY_LAST') {
+        const last = lastRequestByTab.get(msg.tabId)
+        if (!last) {
+          emit(msg.tabId, {
+            type: 'error',
+            requestId: crypto.randomUUID(),
+            message: '没有可重试的任务，请先执行一次开始。',
+          })
+          return
+        }
+        const present: PresentTarget = msg.present ?? last.present
+        await runRequest({ ...last, requestId: crypto.randomUUID(), present })
+      }
+    } catch (error) {
+      console.error('处理 UI 消息失败', error)
+      const senderTabId = port.sender?.tab?.id
+      if (typeof senderTabId === 'number') {
+        emit(senderTabId, {
+          type: 'error',
+          requestId: crypto.randomUUID(),
+          message: '请求失败，请重试或重新打开侧边栏。',
+        })
+      }
     }
   })
 })

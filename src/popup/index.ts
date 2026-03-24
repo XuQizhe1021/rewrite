@@ -20,17 +20,27 @@ const retryBtn = mustGetEl<HTMLButtonElement>('retry')
 let currentTabId: number | null = null
 let lastText = ''
 let lastReq: Omit<StartRequest, 'requestId' | 'tabId'> | null = null
+let activeRequestId: string | null = null
+let uiState: 'idle' | 'loading' | 'streaming' | 'success' | 'error' | 'timeout' = 'idle'
+let timeoutTimer: ReturnType<typeof setTimeout> | null = null
 
 const port = connectUiPort((m) => {
   onBackgroundMessage(m)
 })
 
-postUi(port, { type: 'UI_HELLO' })
+void getTabId()
+  .then((tabId) => {
+    postUi(port, { type: 'UI_HELLO', tabId })
+  })
+  .catch((error) => {
+    console.error('初始化标签页失败', error)
+  })
 
 async function getTabId(): Promise<number> {
   if (currentTabId != null) return currentTabId
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
-  const tabId = tabs[0]?.id
+  const currentWindowTabs = await chrome.tabs.query({ active: true, currentWindow: true })
+  const lastFocusedTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+  const tabId = currentWindowTabs[0]?.id ?? lastFocusedTabs[0]?.id
   if (typeof tabId !== 'number') throw new Error('无法获取当前标签页')
   currentTabId = tabId
   return tabId
@@ -44,8 +54,35 @@ function setStatus(text: string): void {
   setText(statusEl, text)
 }
 
+function clearTimeoutGuard(): void {
+  if (timeoutTimer) {
+    clearTimeout(timeoutTimer)
+    timeoutTimer = null
+  }
+}
+
+function setUiState(state: typeof uiState, text: string): void {
+  uiState = state
+  setStatus(text)
+}
+
+function startTimeoutGuard(): void {
+  clearTimeoutGuard()
+  timeoutTimer = setTimeout(() => {
+    if (uiState === 'success' || uiState === 'error') return
+    uiState = 'timeout'
+    setStatus('请求超时，请点击“重新生成”重试')
+  }, 30000)
+}
+
 function onStreamEvent(e: StreamEvent): void {
+  if (activeRequestId && e.requestId !== activeRequestId) return
   if (e.type === 'status') {
+    if (e.stage === 'prepare' || e.stage === 'extract' || e.stage === 'truncate' || e.stage === 'request') {
+      uiState = 'loading'
+    } else {
+      uiState = 'streaming'
+    }
     const map: Record<typeof e.stage, string> = {
       prepare: '准备中…',
       extract: '提取正文…',
@@ -58,6 +95,9 @@ function onStreamEvent(e: StreamEvent): void {
   }
 
   if (e.type === 'delta') {
+    clearTimeoutGuard()
+    startTimeoutGuard()
+    uiState = 'streaming'
     lastText += e.delta
     setOutput(lastText)
     setStatus('生成中…')
@@ -65,13 +105,17 @@ function onStreamEvent(e: StreamEvent): void {
   }
 
   if (e.type === 'done') {
+    clearTimeoutGuard()
+    uiState = 'success'
     lastText = e.text
     setOutput(lastText)
     setStatus('完成')
     return
   }
 
-  setStatus(`错误：${e.message}`)
+  clearTimeoutGuard()
+  uiState = 'error'
+  setStatus(`错误：${e.message}（可点击“重新生成”）`)
 }
 
 function onBackgroundMessage(m: BackgroundToUiMessage): void {
@@ -92,42 +136,65 @@ function applyConfig(cfg: UserConfig): void {
 }
 
 runBtn.addEventListener('click', async () => {
-  lastText = ''
-  setOutput('')
-  setStatus('准备中…')
+  try {
+    lastText = ''
+    setOutput('')
+    setUiState('loading', '准备中…')
+    startTimeoutGuard()
 
-  const tabId = await getTabId()
-  const request: StartRequest = {
-    requestId: crypto.randomUUID(),
-    tabId,
-    mode: modeEl.value as TaskMode,
-    style: styleEl.value as SummaryStyle,
-    present: presentEl.value as PresentTarget,
-    selectionOnly: selectionOnlyEl.checked,
-    insertTldr: insertTldrEl.checked,
+    const tabId = await getTabId()
+    const request: StartRequest = {
+      requestId: crypto.randomUUID(),
+      tabId,
+      mode: modeEl.value as TaskMode,
+      style: styleEl.value as SummaryStyle,
+      present: presentEl.value as PresentTarget,
+      selectionOnly: selectionOnlyEl.checked,
+      insertTldr: insertTldrEl.checked,
+    }
+    activeRequestId = request.requestId
+    lastReq = {
+      mode: request.mode,
+      style: request.style,
+      present: request.present,
+      selectionOnly: request.selectionOnly,
+      insertTldr: request.insertTldr,
+    }
+    postUi(port, { type: 'UI_START', payload: request })
+  } catch (error) {
+    clearTimeoutGuard()
+    console.error('开始任务失败', error)
+    setUiState('error', '错误：开始失败，请确认页面可访问后重试')
   }
-  lastReq = {
-    mode: request.mode,
-    style: request.style,
-    present: request.present,
-    selectionOnly: request.selectionOnly,
-    insertTldr: request.insertTldr,
-  }
-  postUi(port, { type: 'UI_START', payload: request })
 })
 
 retryBtn.addEventListener('click', async () => {
-  const tabId = await getTabId()
-  if (!lastReq) {
-    postUi(port, { type: 'UI_RETRY_LAST', tabId })
-    return
+  try {
+    setUiState('loading', '正在重试…')
+    startTimeoutGuard()
+    activeRequestId = null
+    const tabId = await getTabId()
+    if (!lastReq) {
+      postUi(port, { type: 'UI_RETRY_LAST', tabId })
+      return
+    }
+    postUi(port, { type: 'UI_RETRY_LAST', tabId, present: lastReq.present })
+  } catch (error) {
+    clearTimeoutGuard()
+    console.error('重试失败', error)
+    setUiState('error', '错误：重试失败，请刷新页面后再试')
   }
-  postUi(port, { type: 'UI_RETRY_LAST', tabId, present: lastReq.present })
 })
 
 copyBtn.addEventListener('click', async () => {
   if (!lastText) return
-  await navigator.clipboard.writeText(lastText)
+  try {
+    await navigator.clipboard.writeText(lastText)
+    setStatus('已复制')
+  } catch (error) {
+    console.error('复制失败', error)
+    setStatus('复制失败，请检查剪贴板权限')
+  }
 })
 
 openOptionsBtn.addEventListener('click', () => {
@@ -135,18 +202,17 @@ openOptionsBtn.addEventListener('click', () => {
 })
 
 openSidepanelBtn.addEventListener('click', async () => {
-  const tabId = await getTabId()
-  postUi(port, {
-    type: 'UI_START',
-    payload: {
-      requestId: crypto.randomUUID(),
-      tabId,
-      mode: modeEl.value as TaskMode,
-      style: styleEl.value as SummaryStyle,
-      present: 'sidepanel',
-      selectionOnly: selectionOnlyEl.checked,
-      insertTldr: insertTldrEl.checked,
-    },
-  })
+  try {
+    const tabId = await getTabId()
+    postUi(port, { type: 'UI_OPEN_SIDEPANEL', tabId })
+    if (lastReq) {
+      postUi(port, { type: 'UI_RETRY_LAST', tabId, present: 'sidepanel' })
+    } else {
+      setStatus('侧边栏已打开，可在侧边栏继续操作')
+    }
+  } catch (error) {
+    console.error('打开侧边栏失败', error)
+    setUiState('error', '错误：侧边栏打开失败，请确认浏览器支持 Side Panel')
+  }
 })
 

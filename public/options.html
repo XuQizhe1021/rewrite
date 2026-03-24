@@ -7,13 +7,18 @@
     <link rel="stylesheet" href="ui.css" />
   </head>
   <body>
-    <div class="ui-shell" style="max-width: 880px; margin: 0 auto">
+    <div class="ui-shell ui-shell-options">
       <header class="ui-header">
-        <div class="ui-title">设置</div>
-        <div class="ui-muted">API Key 仅保存在本地（chrome.storage.local），不会上传到开发者服务器。</div>
+        <div>
+          <div class="ui-title ui-title-lg">扩展设置</div>
+          <div class="ui-muted">用于配置模型、触发策略与展示行为，所有改动即时生效。</div>
+        </div>
+        <div class="ui-note">API Key 仅保存在本地（chrome.storage.local）</div>
       </header>
 
       <section class="ui-card">
+        <div class="ui-subtitle">模型与 API</div>
+        <div class="ui-muted ui-section-desc">前端不保存明文日志，实际请求由后台代理发起。</div>
         <div class="ui-grid">
           <div>
             <label class="ui-label" for="provider">服务商</label>
@@ -40,6 +45,12 @@
             <label class="ui-label" for="temperature">温度（0-1）</label>
             <input id="temperature" class="ui-input" type="number" min="0" max="1" step="0.1" />
           </div>
+        </div>
+      </section>
+
+      <section class="ui-card">
+        <div class="ui-subtitle">输出模式</div>
+        <div class="ui-grid">
           <div>
             <label class="ui-label" for="defaultStyle">默认风格</label>
             <select id="defaultStyle" class="ui-select">
@@ -64,22 +75,31 @@
             </select>
           </div>
         </div>
-
-        <div class="ui-actions" style="margin-top: 12px">
-          <button id="save" class="ui-btn ui-btn-primary" type="button">保存</button>
-          <button id="reset" class="ui-btn" type="button">恢复默认</button>
-        </div>
-        <div id="saveStatus" class="ui-muted" style="margin-top: 8px"></div>
       </section>
 
       <section class="ui-card">
-        <div class="ui-subtitle">自动模式（白名单）</div>
-        <div class="ui-muted">出于最小权限策略，只有你授权过的域名才会自动运行。</div>
-        <div class="ui-row" style="margin-top: 8px">
+        <div class="ui-subtitle">触发策略</div>
+        <div class="ui-muted ui-section-desc">只有授权域名会启用自动运行，避免超范围权限。</div>
+        <div class="ui-row ui-row-domain">
           <input id="autoDomain" class="ui-input" placeholder="example.com" />
           <button id="addDomain" class="ui-btn" type="button">添加并授权</button>
         </div>
-        <div id="domainList" class="ui-list" style="margin-top: 8px"></div>
+        <div id="domainList" class="ui-list ui-list-mt"></div>
+      </section>
+
+      <section class="ui-card ui-card-warn">
+        <div class="ui-subtitle">外观与行为</div>
+        <div class="ui-muted">
+          Popup 属于浏览器临时窗口，适合快速触发；长流程请优先使用“侧边栏”以保持状态连续。
+        </div>
+      </section>
+
+      <section class="ui-card">
+        <div class="ui-actions ui-actions-spread">
+          <button id="save" class="ui-btn ui-btn-primary" type="button">保存</button>
+          <button id="reset" class="ui-btn ui-btn-danger" type="button">恢复默认</button>
+        </div>
+        <div id="saveStatus" class="ui-muted ui-status-line"></div>
       </section>
 
       <section class="ui-card">
@@ -93,4 +113,3 @@
     <script src="options.js"></script>
   </body>
 </html>
-

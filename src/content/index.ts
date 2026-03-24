@@ -9,10 +9,86 @@ import { renderMarkdown } from '../ui/markdown'
 
 const OVERLAY_ID = 'seo-cleaner-overlay-root'
 const TLDR_ID = 'seo-cleaner-tldr'
+const OVERLAY_MINIMIZED_KEY = 'seoCleanerOverlayMinimized'
+const OVERLAY_POSITION_KEY = `seoCleanerOverlayPosition:${location.hostname || 'global'}`
 
 let overlayText = ''
 let overlayTitle = ''
 let overlayStatus = ''
+let overlayMinimized = false
+let dragState:
+  | {
+      offsetX: number
+      offsetY: number
+      pointerId: number
+    }
+  | null = null
+
+function loadOverlayPosition(): { left: number; top: number } | null {
+  try {
+    const raw = sessionStorage.getItem(OVERLAY_POSITION_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { left?: number; top?: number }
+    if (typeof parsed.left !== 'number' || typeof parsed.top !== 'number') return null
+    return { left: parsed.left, top: parsed.top }
+  } catch {
+    return null
+  }
+}
+
+function saveOverlayPosition(left: number, top: number): void {
+  try {
+    sessionStorage.setItem(OVERLAY_POSITION_KEY, JSON.stringify({ left, top }))
+  } catch {
+    // ignore
+  }
+}
+
+function loadOverlayMinimized(): boolean {
+  try {
+    return sessionStorage.getItem(OVERLAY_MINIMIZED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function saveOverlayMinimized(minimized: boolean): void {
+  try {
+    sessionStorage.setItem(OVERLAY_MINIMIZED_KEY, minimized ? '1' : '0')
+  } catch {
+    // ignore
+  }
+}
+
+function clampOverlayPosition(host: HTMLElement, left: number, top: number): { left: number; top: number } {
+  const margin = 12
+  const maxLeft = Math.max(margin, window.innerWidth - host.offsetWidth - margin)
+  const maxTop = Math.max(margin, window.innerHeight - host.offsetHeight - margin)
+  return {
+    left: Math.min(Math.max(left, margin), maxLeft),
+    top: Math.min(Math.max(top, margin), maxTop),
+  }
+}
+
+function applyOverlayPosition(host: HTMLElement, left: number, top: number): void {
+  const clamped = clampOverlayPosition(host, left, top)
+  host.style.left = `${clamped.left}px`
+  host.style.top = `${clamped.top}px`
+  host.style.right = 'auto'
+  host.style.bottom = 'auto'
+}
+
+function resetOverlayPosition(host: HTMLElement): void {
+  host.style.left = 'auto'
+  host.style.top = 'auto'
+  host.style.right = '12px'
+  host.style.bottom = '12px'
+  try {
+    sessionStorage.removeItem(OVERLAY_POSITION_KEY)
+  } catch {
+    // ignore
+  }
+}
 
 function ensureOverlay(): { root: HTMLElement; body: HTMLElement; status: HTMLElement } {
   let host = document.getElementById(OVERLAY_ID) as HTMLElement | null
@@ -20,7 +96,7 @@ function ensureOverlay(): { root: HTMLElement; body: HTMLElement; status: HTMLEl
     host = document.createElement('div')
     host.id = OVERLAY_ID
     host.style.position = 'fixed'
-    host.style.top = '12px'
+    host.style.bottom = '12px'
     host.style.right = '12px'
     host.style.zIndex = '2147483647'
     host.style.width = '420px'
@@ -37,8 +113,10 @@ function ensureOverlay(): { root: HTMLElement; body: HTMLElement; status: HTMLEl
     header.style.justifyContent = 'space-between'
     header.style.gap = '8px'
     header.style.padding = '10px 12px'
-    header.style.background = '#0b1020'
+    header.style.background = '#111827'
     header.style.color = '#ffffff'
+    header.style.cursor = 'move'
+    header.style.userSelect = 'none'
 
     const title = document.createElement('div')
     title.id = `${OVERLAY_ID}-title`
@@ -50,13 +128,13 @@ function ensureOverlay(): { root: HTMLElement; body: HTMLElement; status: HTMLEl
     actions.style.display = 'flex'
     actions.style.gap = '6px'
 
-    const mkBtn = (label: string) => {
+    const mkBtn = (label: string, danger = false) => {
       const b = document.createElement('button')
       b.type = 'button'
       b.textContent = label
       b.style.fontSize = '12px'
-      b.style.border = '1px solid rgba(255,255,255,.25)'
-      b.style.background = 'rgba(255,255,255,.06)'
+      b.style.border = danger ? '1px solid rgba(248,113,113,.45)' : '1px solid rgba(255,255,255,.25)'
+      b.style.background = danger ? 'rgba(185,28,28,.24)' : 'rgba(255,255,255,.06)'
       b.style.color = '#ffffff'
       b.style.borderRadius = '10px'
       b.style.padding = '6px 8px'
@@ -65,23 +143,87 @@ function ensureOverlay(): { root: HTMLElement; body: HTMLElement; status: HTMLEl
     }
 
     const copyBtn = mkBtn('复制')
+    copyBtn.addEventListener('pointerdown', (event) => {
+      event.stopPropagation()
+    })
     copyBtn.addEventListener('click', async () => {
       if (!overlayText) return
-      await navigator.clipboard.writeText(overlayText)
+      try {
+        await navigator.clipboard.writeText(overlayText)
+        overlayStatus = '已复制'
+        renderOverlay()
+      } catch (error) {
+        console.error('悬浮层复制失败', error)
+        overlayStatus = '复制失败，请检查剪贴板权限'
+        renderOverlay()
+      }
     })
 
     const retryBtn = mkBtn('重试')
+    retryBtn.addEventListener('pointerdown', (event) => {
+      event.stopPropagation()
+    })
     retryBtn.addEventListener('click', () => {
       chrome.runtime.sendMessage({ type: 'CONTENT_OVERLAY_RETRY' } satisfies ContentToBackgroundMessage)
     })
 
-    const closeBtn = mkBtn('关闭')
+    const miniBtn = mkBtn('收起')
+    miniBtn.id = `${OVERLAY_ID}-mini`
+    miniBtn.addEventListener('pointerdown', (event) => {
+      event.stopPropagation()
+    })
+    miniBtn.addEventListener('click', () => {
+      overlayMinimized = !overlayMinimized
+      saveOverlayMinimized(overlayMinimized)
+      renderOverlay()
+    })
+
+    const resetBtn = mkBtn('重置位')
+    resetBtn.addEventListener('pointerdown', (event) => {
+      event.stopPropagation()
+    })
+    resetBtn.addEventListener('click', () => {
+      resetOverlayPosition(host!)
+    })
+
+    const closeBtn = mkBtn('关闭', true)
+    closeBtn.addEventListener('pointerdown', (event) => {
+      event.stopPropagation()
+    })
     closeBtn.addEventListener('click', () => {
       host?.remove()
     })
 
-    actions.append(copyBtn, retryBtn, closeBtn)
+    actions.append(copyBtn, retryBtn, miniBtn, resetBtn, closeBtn)
     header.append(title, actions)
+
+    // 拖拽逻辑：只允许在视口范围内移动，并在释放后记录位置
+    header.addEventListener('pointerdown', (event) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('button')) return
+      const rect = host!.getBoundingClientRect()
+      dragState = {
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+        pointerId: event.pointerId,
+      }
+      header.setPointerCapture(event.pointerId)
+      event.preventDefault()
+    })
+    header.addEventListener('pointermove', (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return
+      applyOverlayPosition(host!, event.clientX - dragState.offsetX, event.clientY - dragState.offsetY)
+    })
+    header.addEventListener('pointerup', (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return
+      const rect = host!.getBoundingClientRect()
+      saveOverlayPosition(rect.left, rect.top)
+      dragState = null
+      header.releasePointerCapture(event.pointerId)
+    })
+    header.addEventListener('pointercancel', () => {
+      dragState = null
+    })
 
     const status = document.createElement('div')
     status.id = `${OVERLAY_ID}-status`
@@ -101,6 +243,11 @@ function ensureOverlay(): { root: HTMLElement; body: HTMLElement; status: HTMLEl
 
     host.append(header, status, body)
     document.documentElement.appendChild(host)
+    const persisted = loadOverlayPosition()
+    if (persisted) {
+      applyOverlayPosition(host, persisted.left, persisted.top)
+    }
+    overlayMinimized = loadOverlayMinimized()
   }
 
   const body = document.getElementById(`${OVERLAY_ID}-body`) as HTMLElement
@@ -109,13 +256,18 @@ function ensureOverlay(): { root: HTMLElement; body: HTMLElement; status: HTMLEl
 }
 
 function renderOverlay(): void {
-  const { body, status } = ensureOverlay()
+  const { root, body, status } = ensureOverlay()
   status.textContent = overlayStatus
 
   const titleEl = document.getElementById(`${OVERLAY_ID}-title`)
   if (titleEl) titleEl.textContent = overlayTitle || 'SEO/内容垃圾过滤器'
+  const miniEl = document.getElementById(`${OVERLAY_ID}-mini`) as HTMLButtonElement | null
+  if (miniEl) miniEl.textContent = overlayMinimized ? '展开' : '收起'
 
   body.innerHTML = renderMarkdown(overlayText)
+  status.style.display = overlayMinimized ? 'none' : 'block'
+  body.style.display = overlayMinimized ? 'none' : 'block'
+  root.style.maxHeight = overlayMinimized ? '48px' : '70vh'
 }
 
 function cleanClone(doc: Document): void {
