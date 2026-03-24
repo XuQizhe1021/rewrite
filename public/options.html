@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SEO/内容垃圾过滤器 - 设置</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body>
+    <div class="ui-shell" style="max-width: 880px; margin: 0 auto">
+      <header class="ui-header">
+        <div class="ui-title">设置</div>
+        <div class="ui-muted">API Key 仅保存在本地（chrome.storage.local），不会上传到开发者服务器。</div>
+      </header>
+
+      <section class="ui-card">
+        <div class="ui-grid">
+          <div>
+            <label class="ui-label" for="provider">服务商</label>
+            <select id="provider" class="ui-select">
+              <option value="deepseek">DeepSeek</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Claude（Anthropic）</option>
+              <option value="gemini">Gemini</option>
+            </select>
+          </div>
+          <div>
+            <label class="ui-label" for="model">模型</label>
+            <input id="model" class="ui-input" placeholder="例如：gpt-4o-mini" />
+          </div>
+          <div>
+            <label class="ui-label" for="baseUrl">API Base URL</label>
+            <input id="baseUrl" class="ui-input" placeholder="例如：https://api.openai.com" />
+          </div>
+          <div>
+            <label class="ui-label" for="apiKey">API Key</label>
+            <input id="apiKey" class="ui-input" type="password" placeholder="不会在任何前端脚本中打印" />
+          </div>
+          <div>
+            <label class="ui-label" for="temperature">温度（0-1）</label>
+            <input id="temperature" class="ui-input" type="number" min="0" max="1" step="0.1" />
+          </div>
+          <div>
+            <label class="ui-label" for="defaultStyle">默认风格</label>
+            <select id="defaultStyle" class="ui-select">
+              <option value="concise">简洁</option>
+              <option value="detailed">详细</option>
+              <option value="minimal">极简</option>
+            </select>
+          </div>
+          <div>
+            <label class="ui-label" for="defaultMode">默认模式</label>
+            <select id="defaultMode" class="ui-select">
+              <option value="summary">总结要点</option>
+              <option value="steps">提取操作步骤</option>
+              <option value="compare">对比分析</option>
+            </select>
+          </div>
+          <div>
+            <label class="ui-label" for="defaultPresent">默认呈现</label>
+            <select id="defaultPresent" class="ui-select">
+              <option value="sidepanel">侧边栏</option>
+              <option value="overlay">悬浮层</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="ui-actions" style="margin-top: 12px">
+          <button id="save" class="ui-btn ui-btn-primary" type="button">保存</button>
+          <button id="reset" class="ui-btn" type="button">恢复默认</button>
+        </div>
+        <div id="saveStatus" class="ui-muted" style="margin-top: 8px"></div>
+      </section>
+
+      <section class="ui-card">
+        <div class="ui-subtitle">自动模式（白名单）</div>
+        <div class="ui-muted">出于最小权限策略，只有你授权过的域名才会自动运行。</div>
+        <div class="ui-row" style="margin-top: 8px">
+          <input id="autoDomain" class="ui-input" placeholder="example.com" />
+          <button id="addDomain" class="ui-btn" type="button">添加并授权</button>
+        </div>
+        <div id="domainList" class="ui-list" style="margin-top: 8px"></div>
+      </section>
+
+      <section class="ui-card">
+        <div class="ui-subtitle">v2.0 多模态（占位）</div>
+        <div class="ui-muted">
+          v2.0 图片理解/多模态仅保留接口与文档占位：v1.0 不提取图片、不上传图片、不调用视觉模型。
+        </div>
+      </section>
+    </div>
+
+    <script src="options.js"></script>
+  </body>
+</html>
+

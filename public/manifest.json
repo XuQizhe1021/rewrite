@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "SEO/内容垃圾过滤器",
+  "version": "1.0.0",
+  "description": "面向网页阅读的内容净化与总结：提取正文、截断、后台代理 AI（流式）、侧边栏/悬浮层/Popup/右键菜单。",
+  "icons": {
+    "16": "icon.svg",
+    "48": "icon.svg",
+    "128": "icon.svg"
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "sidePanel",
+    "contextMenus",
+    "permissions"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "SEO/内容垃圾过滤器",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}
+

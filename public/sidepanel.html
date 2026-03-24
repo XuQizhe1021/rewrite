@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SEO/内容垃圾过滤器 - 侧边栏</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body>
+    <div class="ui-shell" style="max-width: 680px; margin: 0 auto">
+      <header class="ui-header">
+        <div class="ui-title">侧边栏</div>
+        <div class="ui-actions">
+          <button id="openOptions" class="ui-btn" type="button">设置</button>
+        </div>
+      </header>
+
+      <section class="ui-card">
+        <div class="ui-grid">
+          <div>
+            <label class="ui-label" for="mode">模式</label>
+            <select id="mode" class="ui-select">
+              <option value="summary">总结要点</option>
+              <option value="steps">提取操作步骤</option>
+              <option value="compare">对比分析</option>
+            </select>
+          </div>
+          <div>
+            <label class="ui-label" for="style">风格</label>
+            <select id="style" class="ui-select">
+              <option value="concise">简洁</option>
+              <option value="detailed">详细</option>
+              <option value="minimal">极简</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="ui-row ui-row-inline" style="margin-top: 8px">
+          <label class="ui-check">
+            <input id="selectionOnly" type="checkbox" />
+            仅总结选中文字
+          </label>
+          <label class="ui-check">
+            <input id="insertTldr" type="checkbox" />
+            插入 TL;DR 顶部条
+          </label>
+        </div>
+
+        <div class="ui-actions" style="margin-top: 12px">
+          <button id="run" class="ui-btn ui-btn-primary" type="button">开始</button>
+          <button id="showOverlay" class="ui-btn" type="button">用悬浮层显示</button>
+        </div>
+      </section>
+
+      <section class="ui-card">
+        <div class="ui-subtitle">输出</div>
+        <div id="status" class="ui-muted">等待触发</div>
+        <div id="output" class="ui-output" style="min-height: 240px"></div>
+        <div class="ui-actions" style="margin-top: 8px">
+          <button id="copy" class="ui-btn" type="button">复制</button>
+          <button id="retry" class="ui-btn" type="button">重新生成</button>
+          <button id="good" class="ui-btn" type="button">满意</button>
+          <button id="bad" class="ui-btn" type="button">不满意</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
+
